@@ -1,127 +1,82 @@
 package parser
 
 import (
-	"fmt"
-
 	"github.com/3Xpl0it3r/monkey/pkg/ast"
 	"github.com/3Xpl0it3r/monkey/pkg/lexer"
 	"github.com/3Xpl0it3r/monkey/pkg/token"
 )
 
+type (
+	// prefixParseFn will be call when token is in prefix position
+	prefixParseFn func() ast.Expression
+	// infixParseFn will be call when token is in infix position
+	// the argument in the left side of infix operator
+	infixParseFn func(ast.Expression) ast.Expression
+)
+
 type Parser struct {
-	l *lexer.Lexer
+	l      *lexer.Lexer
+	errors []string
 
 	curToken  token.Token
 	peekToken token.Token
 
-	errors []string
+	prefixParseFns map[token.TokenType]prefixParseFn
+	infixParseFns  map[token.TokenType]infixParseFn
 }
 
 func New(l *lexer.Lexer) *Parser {
 	p := &Parser{l: l, errors: make([]string, 0)}
 	// Read two tokens, so curToken  and peekToken are both set
+	// 一次性读两次token，因为curToken 和 peekToken 都需要被设置
 	p.nextToken()
 	p.nextToken()
+	p.prefixParseFns = make(map[token.TokenType]prefixParseFn)
+	p.infixParseFns = make(map[token.TokenType]infixParseFn, 0)
+	// 注册 prefixParseFn
+	p.registerPrefix(token.IDENT, p.parseIdentifier)
+	p.registerPrefix(token.INT, p.parseIntegerLiteral)
+	p.registerPrefix(token.BANG, p.parsePrefixExpression)
+	p.registerPrefix(token.MINUS, p.parsePrefixExpression)
+	// 注册infixParseFn
+	p.registerInfix(token.PLUS, p.parseInfixExpression)
+	p.registerInfix(token.MINUS, p.parseInfixExpression)
+	p.registerInfix(token.SLASH, p.parseInfixExpression)
+	p.registerInfix(token.ASTERISK, p.parseInfixExpression)
+	p.registerInfix(token.EQ, p.parseInfixExpression)
+	p.registerInfix(token.NOT_EQ, p.parseInfixExpression)
+	p.registerInfix(token.LT, p.parseInfixExpression)
+	p.registerInfix(token.GT, p.parseInfixExpression)
 
 	return p
-
-}
-
-func (p *Parser) nextToken() {
-	p.curToken = p.peekToken
-	p.peekToken = p.l.NextToken()
 }
 
 func (p *Parser) ParseProgram() *ast.Program {
 	program := &ast.Program{}
 	program.Statements = make([]ast.Statement, 0)
 	for !p.curTokenIs(token.EOF) {
-		vtmt := p.parseStatement()
-		if vtmt != nil {
-			program.Statements = append(program.Statements, vtmt)
+		stmt := p.parseStatement()
+		if stmt != nil {
+			program.Statements = append(program.Statements, stmt)
 		}
 		p.nextToken()
 	}
 	return program
 }
 
+// parseStatement 解析statement，根据tokenType 将具体解析派发给其他函数来执行
 func (p *Parser) parseStatement() ast.Statement {
-	var ret ast.Statement
 	switch p.curToken.Type {
 	case token.LET:
-		ret = p.parseLetStatement()
+		return p.parseLetStatement()
 	case token.RETURN:
-		ret = p.parseReturnStatement()
+		return p.parseReturnStatement()
 	default:
-		ret = nil
-	}
-	return ret
-}
-
-func (p *Parser) parseLetStatement() *ast.LetStatement {
-	stmt := &ast.LetStatement{Token: p.curToken}
-	// identifier
-	if !p.expectPeek(token.IDENT) {
-		return nil
-	}
-
-	stmt.Name = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
-	if !p.expectPeek(token.ASSIGN) {
-		return nil
-	}
-
-	// TODO: Skipping the expression
-
-	for !p.curTokenIs(token.SEMICOLON) {
-		p.nextToken()
-	}
-	return stmt
-
-}
-
-func (p *Parser) parseReturnStatement() *ast.ReturnStatement {
-	stmt := &ast.ReturnStatement{Token: p.curToken}
-	p.nextToken()
-
-	for !p.curTokenIs(token.SEMICOLON) {
-		p.nextToken()
-	}
-
-	return stmt
-}
-
-// curTokenIs
-func (p *Parser) curTokenIs(t token.TokenType) bool {
-	return p.curToken.Type == t
-}
-
-// peekTokenIs
-func (p *Parser) peekTokenIs(t token.TokenType) bool {
-	return p.peekToken.Type == t
-}
-
-// expectPeek is used to check the type of peek token is expected or not
-func (p *Parser) expectPeek(t token.TokenType) bool {
-	if p.peekTokenIs(t) {
-		p.nextToken()
-		return true
-	} else {
-		p.peekTokenError(t)
-		return false
+		return p.parseExpressionStatement()
 	}
 }
 
-// Errors return the errors
-func (p *Parser) Errors() []string {
-	return p.errors
-}
-
-func (p *Parser) peekTokenError(t token.TokenType) {
-	msg := fmt.Sprintf("expected next token to be %s, but got %s instead", t, p.peekToken.Type)
-	p.errors = append(p.errors, msg)
-}
-
-func (p *Parser) currTokenError(t token.TokenType) {
-	msg := fmt.Sprintf("expect current token to be %s, but got %s instead", t, p.curToken.Type)
-	p.errors = append(p.errors, msg)
+// parseIdentifier
+func (p *Parser) parseIdentifier() ast.Expression {
+	return &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
 }
